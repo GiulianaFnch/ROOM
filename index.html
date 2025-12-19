@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>CONTAINMENT BREACH - SUBJECT D-20</title>
+    <style>
+        body { 
+            margin: 0; 
+            background-color: #050505; 
+            overflow: hidden; 
+            font-family: 'Courier New', monospace;
+        }
+        
+        /* O SEGREDO DO VISUAL PS2: */
+        canvas { 
+            display: block; 
+            width: 100vw; 
+            height: 100vh;
+            /* Força o navegador a não suavizar os pixels ao esticar */
+            image-rendering: pixelated; 
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #d8d8d8;
+            text-shadow: 1px 1px 0 #000;
+            pointer-events: none;
+            opacity: 0.8;
+            mix-blend-mode: exclusion; /* Faz o texto reagir à luz do fundo */
+        }
+        
+        .scanline {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+            background-size: 100% 4px; /* Linhas de TV */
+            pointer-events: none;
+            z-index: 10;
+        }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div class="scanline"></div>
+
+    <div id="ui-layer">
+        <div>CAM-04 [REC]</div>
+        <div>BIO-SIGN: <span id="status" style="color: #ff3333">DORMANT</span></div>
+        <div style="font-size: 12px; margin-top: 5px;">LIGHT LEVEL: LOW</div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- 1. CONFIGURAÇÃO LOW-FI ---
+        // Renderizamos pequeno, o CSS estica. Isso dá o look PS2.
+        const RENDER_WIDTH = 320;
+        const RENDER_HEIGHT = 240;
+
+        const scene = new THREE.Scene();
+        // Neblina densa e escura para esconder o infinito
+        scene.fog = new THREE.FogExp2(0x050705, 0.15); 
+        scene.background = new THREE.Color(0x050705);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: false }); // Antialias OFF para serrilhado
+        renderer.setSize(RENDER_WIDTH, RENDER_HEIGHT, false); // false = não mudar o style do canvas
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.BasicShadowMap; // Sombras duras/pixeladas
+        document.body.appendChild(renderer.domElement);
+
+        // --- 2. GERADOR DE TEXTURA DE "SUJEIRA" (Procedural) ---
+        function createNoiseTexture(colorBase) {
+            const size = 64; // Textura pequena = borrada
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            
+            // Fundo
+            ctx.fillStyle = colorBase;
+            ctx.fillRect(0,0,size,size);
+            
+            // Sujeira
+            for(let i=0; i<400; i++) {
+                ctx.fillStyle = Math.random() > 0.5 ? '#000000' : '#332211';
+                ctx.globalAlpha = 0.1 + Math.random() * 0.2;
+                const x = Math.random() * size;
+                const y = Math.random() * size;
+                const w = Math.random() * 2;
+                const h = Math.random() * 2;
+                ctx.fillRect(x, y, w, h);
+            }
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.magFilter = THREE.NearestFilter; // Pixelated
+            texture.minFilter = THREE.NearestFilter;
+            return texture;
+        }
+
+        // Materiais com atmosfera "suja"
+        const wallMat = new THREE.MeshStandardMaterial({ 
+            map: createNoiseTexture('#2a2f2a'), // Cinza esverdeado sujo
+            roughness: 0.9,
+            metalness: 0.1
+        });
+
+        const floorMat = new THREE.MeshStandardMaterial({ 
+            map: createNoiseTexture('#1a1a1a'), // Chão quase preto
+            roughness: 0.8,
+            metalness: 0.3
+        });
+
+        // --- 3. O AMBIENTE (A SALA) ---
+        const roomGeo = new THREE.BoxGeometry(10, 8, 10);
+        // Inverte a geometria para vermos de dentro
+        const room = new THREE.Mesh(roomGeo, wallMat);
+        room.scale.set(-1, 1, 1); 
+        room.receiveShadow = true; 
+        scene.add(room);
+
+        // Chão separado para ter outra cor
+        const floorGeo = new THREE.PlaneGeometry(10, 10);
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.y = -4;
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        // --- 4. O PET (Ovo Alienígena Low Poly) ---
+        const eggGeo = new THREE.IcosahedronGeometry(0.8, 0); // Low poly (0 subdivisões)
+        const eggMat = new THREE.MeshStandardMaterial({
+            color: 0x445533, // Verde militar morto
+            roughness: 0.4,
+            metalness: 0.6,
+            flatShading: true // Importante: mostra as faces facetadas (look low poly)
+        });
+        const pet = new THREE.Mesh(eggGeo, eggMat);
+        pet.castShadow = true;
+        scene.add(pet);
+
+        // --- 5. ILUMINAÇÃO DRAMÁTICA ---
+        // Luz ambiente muito fraca (quase breu)
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.05); 
+        scene.add(ambientLight);
+
+        // A LANTERNA DO JOGADOR
+        const flashlight = new THREE.SpotLight(0xffffee, 50); // Luz forte e amarelada
+        flashlight.angle = Math.PI / 6; // Feixe fechado
+        flashlight.penumbra = 0.5;      // Bordas suaves mas marcadas
+        flashlight.decay = 2;
+        flashlight.distance = 15;
+        flashlight.castShadow = true;
+        flashlight.shadow.mapSize.width = 512; // Sombra low-res
+        flashlight.shadow.mapSize.height = 512;
+        scene.add(flashlight);
+        scene.add(flashlight.target);
+
+        // --- 6. CONTROLES E ANIMAÇÃO ---
+        
+        // Mouse move a "cabeça" (Câmera e Lanterna)
+        let mouseX = 0;
+        let mouseY = 0;
+        const windowHalfX = window.innerWidth / 2;
+        const windowHalfY = window.innerHeight / 2;
+
+        document.addEventListener('mousemove', (event) => {
+            mouseX = (event.clientX - windowHalfX) / 200; // Sensibilidade
+            mouseY = (event.clientY - windowHalfY) / 200;
+        });
+
+        // Interação de Clique (Hacking/Cuidado)
+        let stressLevel = 0;
+        document.addEventListener('mousedown', () => {
+            stressLevel += 0.5; // Clicar agita o bicho
+            document.getElementById('status').innerText = "AGITATED";
+            document.getElementById('status').style.color = "#ffaa00";
+        });
+
+        camera.position.z = 4;
+        camera.position.y = 0.5;
+
+        // Loop principal
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            const time = clock.getElapsedTime();
+
+            // 1. Movimento da Câmera (estilo "Handheld" / Câmera de mão)
+            camera.position.x += (mouseX - camera.position.x) * 0.05;
+            camera.position.y += (-mouseY - camera.position.y + 0.5) * 0.05;
+            camera.lookAt(0, 0, 0);
+
+            // A Lanterna segue a câmera, mas com um pequeno atraso (lag) para realismo
+            flashlight.position.copy(camera.position);
+            flashlight.target.position.set(mouseX * 2, -mouseY * 2, 0);
+            
+            // 2. Animação do Pet
+            // Ele flutua devagar ("respira")
+            pet.position.y = Math.sin(time) * 0.2;
+            
+            // Rotação lenta e sinistra
+            pet.rotation.x += 0.002;
+            pet.rotation.y += 0.005;
+
+            // Se o estresse estiver alto (clicou), ele treme
+            if (stressLevel > 0) {
+                pet.position.x = (Math.random() - 0.5) * 0.1;
+                pet.position.z = (Math.random() - 0.5) * 0.1;
+                stressLevel -= delta; // Acalma com o tempo
+            } else {
+                pet.position.x = 0;
+                pet.position.z = 0;
+                document.getElementById('status').innerText = "DORMANT";
+                document.getElementById('status').style.color = "#33ff33";
+            }
+
+            // 3. Efeito de falha na luz (Flicker) ocasional
+            if (Math.random() > 0.98) {
+                flashlight.intensity = Math.random() * 50;
+            } else {
+                flashlight.intensity = 50;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            // Mantemos a resolução interna baixa, o CSS cuida do resto
+        });
+    </script>
+</body>
+</html>
